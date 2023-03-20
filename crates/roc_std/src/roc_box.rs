@@ -65,6 +65,13 @@ impl<T> RocBox<T> {
                 .cast::<Cell<Storage>>()
         }
     }
+
+    // This is unsafe because before doing a deep_copy we need to check that
+    // self is read_only.
+    unsafe fn deep_copy(&self) -> Self {
+        let contents = unsafe { ptr::read(self.contents.as_ptr()) };
+        Self::new(contents)
+    }
 }
 
 impl<T> Deref for RocBox<T> {
@@ -164,5 +171,60 @@ impl<T> Drop for RocBox<T> {
             // Write the storage back.
             storage.set(new_storage);
         }
+    }
+}
+
+// This is a RocBox that is checked to ensure it is unique or readonly such that it can be sent between threads safely.
+#[repr(transparent)]
+pub struct SendSafeRocBox<T>(RocBox<T>);
+
+unsafe impl<T> Send for SendSafeRocBox<T> {}
+
+impl<T> Clone for SendSafeRocBox<T> {
+    fn clone(&self) -> Self {
+        // Determine if self is read only.
+        let is_readonly = {
+            let storage_ = self.0.storage().get();
+            let val = storage_.is_readonly();
+            self.0.storage().set(storage_);
+            val
+        };
+
+        if is_readonly {
+            // In this case we can just take ownership
+            // of the data as it is safe to be sent between threads.
+            SendSafeRocBox(self.0.clone())
+        } else {
+            // This is not read only, do a deep copy.
+            unsafe { SendSafeRocBox(self.0.deep_copy()) }
+        }
+    }
+}
+
+impl<T> From<RocBox<T>> for SendSafeRocBox<T> {
+    fn from(b: RocBox<T>) -> Self {
+        // Determine if the give is read only or
+        // if its reference count is 1.
+        let is_safe = {
+            let storage_ = b.storage().get();
+            let val = storage_.is_readonly() || storage_.is_unique();
+            b.storage().set(storage_);
+            val
+        };
+
+        if is_safe {
+            // In this case we can just take ownership
+            // of the data as it is safe to be sent between threads.
+            SendSafeRocBox(b)
+        } else {
+            // This is not read only nor unique, do a deep copy.
+            unsafe { SendSafeRocBox(b.deep_copy()) }
+        }
+    }
+}
+
+impl<T> From<SendSafeRocBox<T>> for RocBox<T> {
+    fn from(ssb: SendSafeRocBox<T>) -> Self {
+        ssb.0
     }
 }

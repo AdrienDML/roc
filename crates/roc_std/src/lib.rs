@@ -18,7 +18,7 @@ mod roc_set;
 mod roc_str;
 mod storage;
 
-pub use roc_box::RocBox;
+pub use roc_box::{RocBox, SendSafeRocBox};
 pub use roc_dict::RocDict;
 pub use roc_list::{RocList, SendSafeRocList};
 pub use roc_set::RocSet;
